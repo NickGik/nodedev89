@@ -21,10 +21,9 @@ const server = require('http').createServer(app); // HTTP server for WebSocket
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Connect to MongoDB
-mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('MongoDB connected'))
   .catch(err => console.error('MongoDB connection error:', err));
-
 
 // Configure Nunjucks
 nunjucks.configure('views', {
@@ -40,76 +39,80 @@ nunjucks.configure('views', {
   },
 });
 
-// CORS setup
 app.use(cors({
-  origin: '*', // Allow requests from any origin
-  methods: ['GET', 'POST', 'PUT', 'DELETE'], // Allow all basic HTTP methods
-  allowedHeaders: ['Content-Type', 'Authorization'], // Allow Content-Type and Authorization headers
-  credentials: true // Allow cookie usage
+  origin: process.env.CORS_ORIGIN || '*', // Разрешить доступ с любого домена
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true // Разрешить передачу куки
 }));
 
-// Configure cookie-parser
+
 app.use(cookieParser(process.env.SESSION_SECRET));
 
 // Session configuration
 const sessionMiddleware = session({
-  secret: process.env.SESSION_SECRET, // Session secret key for session cookie signing
+  secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  store: new MongoStore({ mongooseConnection: mongoose.connection }), // Correct instantiation of MongoStore
+  store: new MongoStore({ mongooseConnection: mongoose.connection }),
   cookie: {
-    maxAge: 1000 * 60 * 60 * 24 * 7 // 1 week in milliseconds
+    maxAge: 1000 * 60 * 60 * 24 * 7, // 1 week
+    secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
+    httpOnly: true
   }
 });
 
-// Use session middleware in Express app
 app.use(sessionMiddleware);
 
-// JSON and form data parsing middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Set up Nunjucks as view engine
 app.set('view engine', 'njk');
 app.set('views', path.join(__dirname, 'views'));
 
 // JWT authentication middleware
 const authenticateJWT = (req, res, next) => {
-  const token = req.headers.authorization;
-  if (token) {
-    jwt.verify(token.split(' ')[1], process.env.ACCESS_TOKEN_SECRET, (err, user) => {
+  const authHeader = req.headers.authorization;
+  console.log('Authorization Header:', authHeader);
+
+  if (authHeader) {
+    const token = authHeader.split(' ')[1];
+    console.log('Token:', token);
+
+    jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, user) => {
       if (err) {
-        return res.sendStatus(403); // Token verification failed
+        console.error('JWT verification error:', err);
+        return res.sendStatus(403); // Forbidden
       }
-      req.user = user; // Save user information for later use
+      console.log('JWT verification success:', user);
+      req.user = user;
       next();
     });
   } else {
-    res.sendStatus(401); // No token provided
+    console.error('Authorization header missing');
+    res.sendStatus(401); // Unauthorized
   }
 };
+
+
 
 // Registration endpoint
 app.post('/signup', async (req, res) => {
   const { username, password } = req.body;
 
   try {
-    // Check if user with username already exists
     const existingUser = await User.findOne({ username });
     if (existingUser) {
       return res.status(400).send("User with that username already exists");
     }
 
-    // Hash password and create new user
     const hashedPassword = await bcrypt.hash(password, 10);
     const user = new User({ username, password: hashedPassword });
     await user.save();
 
-    // Automatic login after registration
     const token = jwt.sign({ _id: user._id, username: user.username }, process.env.ACCESS_TOKEN_SECRET);
-    req.session.user = user; // Save user in session
+    req.session.user = user;
     res.render('index', { user, userToken: token });
-
   } catch (error) {
     console.error("Error during registration:", error);
     res.status(500).send("An error occurred during user registration");
@@ -120,14 +123,19 @@ app.post('/signup', async (req, res) => {
 app.post('/login', async (req, res) => {
   const { username, password } = req.body;
   const user = await User.findOne({ username });
+
   if (user && await user.comparePassword(password)) {
     const token = jwt.sign({ _id: user._id, username: user.username }, process.env.ACCESS_TOKEN_SECRET);
-    req.session.user = user; // Save user in session
+    req.session.user = user;
+
+    // Отправка токена клиенту в заголовке Set-Cookie
+    res.cookie('token', token, { httpOnly: true, secure: process.env.NODE_ENV === 'production' });
     res.render('index', { user: user, userToken: token });
   } else {
     res.redirect("/");
   }
 });
+
 
 // Logout endpoint
 app.get('/logout', (req, res) => {
@@ -141,9 +149,8 @@ app.get('/logout', (req, res) => {
   });
 });
 
-// Protected route
-app.get('/', authenticateJWT, (req, res) => {
-  res.render('index', { user: req.user, userToken: req.headers.authorization });
+app.get('/', (req, res) => {
+  res.render('index'); // Предполагается, что у вас есть файл 'index.njk' в папке 'views'
 });
 
 // Create new timer
@@ -152,7 +159,7 @@ app.post('/timer', authenticateJWT, async (req, res) => {
 
   try {
     const newTimer = new Timer({
-      userId: req.user._id, // Use user id from JWT
+      userId: req.user._id,
       description,
       start: new Date(),
       isActive: true,
@@ -161,19 +168,8 @@ app.post('/timer', authenticateJWT, async (req, res) => {
 
     await newTimer.save();
 
-    // After saving timer, calculate durationInSeconds
-    if (!newTimer.isActive) {
-      newTimer.durationInSeconds = Math.floor((newTimer.end - newTimer.start) / 1000);
-    } else {
-      newTimer.durationInSeconds = 0; // or other logic if timer is active
-    }
-
-    // Save updated timer
-    await newTimer.save();
-
     res.status(201).json({
-      timer: newTimer,
-      durationInSeconds: 0 // Duration is 0 because timer was just created
+      timer: newTimer
     });
   } catch (error) {
     console.error('Error creating timer:', error);
@@ -195,7 +191,7 @@ app.post('/timer/stop/:id', authenticateJWT, async (req, res) => {
       return res.status(404).json({ error: 'Timer not found' });
     }
 
-    if (timer.userId.toString() !== req.user._id) {
+    if (timer.userId.toString() !== req.user._id.toString()) {
       return res.status(403).json({ error: 'Access to this timer is denied' });
     }
 
@@ -205,7 +201,7 @@ app.post('/timer/stop/:id', authenticateJWT, async (req, res) => {
 
     timer.isActive = false;
     timer.end = new Date();
-    timer.duration = Math.floor((timer.end - timer.start) / 1000);
+    timer.durationInSeconds = Math.floor((timer.end - timer.start) / 1000);
     await timer.save();
 
     res.json({ message: 'Timer stopped successfully', timer });
@@ -218,41 +214,70 @@ app.post('/timer/stop/:id', authenticateJWT, async (req, res) => {
 // Endpoint to update timers
 app.get('/timer/update', authenticateJWT, async (req, res) => {
   const userId = req.user._id;
-  const timers = await Timer.find({ userId });
-  timers.forEach(timer => {
-    if (timer.isActive) {
-      timer.durationInSeconds = Math.floor((new Date() - timer.start) / 1000);
-    }
-  });
-  res.json({ timers });
+  try {
+    const timers = await Timer.find({ userId });
+    timers.forEach(timer => {
+      if (timer.isActive) {
+        timer.durationInSeconds = Math.floor((new Date() - timer.start) / 1000);
+      }
+    });
+    res.json({ timers });
+  } catch (error) {
+    console.error('Error fetching timers:', error);
+    res.status(500).json({ error: 'An error occurred while fetching timers' });
+  }
 });
 
 // WebSocket server
 const wss = new WebSocket.Server({ server });
 
 wss.on('connection', (ws, req) => {
-  // Check session or token authorization for WebSocket
-  if (req.session.user) {
-    console.log('WebSocket connected with user:', req.session.user.username);
-    // Your WebSocket connection logic with authorized user
-  } else {
-    console.log('Unauthorized WebSocket connection');
-    ws.close(1000, 'Unauthorized'); // Close connection with error
-  }
+  sessionMiddleware(req, {}, () => {
+    if (req.session.user) {
+      console.log('WebSocket connected with user:', req.session.user.username);
 
-  ws.on('message', (message) => {
-    console.log(`Received message => ${message}`);
-  });
+      ws.on('message', (message) => {
+        console.log(`Received message => ${message}`);
+      });
 
-  ws.on('close', () => {
-    console.log('WebSocket disconnected');
+      ws.on('close', () => {
+        console.log('WebSocket disconnected');
+      });
+    } else {
+      console.log('Unauthorized WebSocket connection');
+      ws.close(1000, 'Unauthorized');
+    }
   });
 });
+
+// Функция для отправки обновлений таймеров
+const sendTimersUpdate = async () => {
+  try {
+    const timers = await Timer.find({});
+
+    timers.forEach(timer => {
+      if (timer.isActive) {
+        timer.durationInSeconds = Math.floor((new Date() - timer.start) / 1000);
+      }
+    });
+
+    const timersData = JSON.stringify(timers);
+
+    wss.clients.forEach(client => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(timersData);
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching timers:', error);
+  }
+};
+
+// Запускаем интервал для отправки обновлений каждые 1 секунду
+setInterval(sendTimersUpdate, 1000);
 
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => {
   console.log(`Server started on port ${PORT}`);
 });
-
-
