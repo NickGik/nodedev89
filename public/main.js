@@ -2,7 +2,7 @@
 /* global Vue */
 
 document.addEventListener('DOMContentLoaded', () => {
-  const app = new Vue({
+  new Vue({
     el: '#app',
     data: {
       desc: '',
@@ -32,15 +32,15 @@ document.addEventListener('DOMContentLoaded', () => {
           if (response.ok) {
             return response.json();
           } else {
-            throw new Error('Ошибка при создании таймера');
+            throw new Error('Error creating timer');
           }
         })
         .then(data => {
           this.activeTimers.push(data.timer);
-          console.log('Новый таймер создан:', data);
+          console.log('New timer created:', data);
         })
         .catch(error => {
-          console.error('Ошибка при создании таймера:', error);
+          console.error('Error creating timer:', error);
         });
 
         this.desc = '';
@@ -49,7 +49,7 @@ document.addEventListener('DOMContentLoaded', () => {
       stopTimer(timerId) {
         console.log('Timer ID:', timerId);
         if (!timerId) {
-          console.error('Ошибка: timerId не определен');
+          console.error('Error: timerId is not defined');
           return;
         }
 
@@ -63,7 +63,7 @@ document.addEventListener('DOMContentLoaded', () => {
           if (response.ok) {
             return response.json();
           } else {
-            throw new Error('Ошибка при остановке таймера');
+            throw new Error('Error stopping timer');
           }
         })
         .then(data => {
@@ -73,10 +73,10 @@ document.addEventListener('DOMContentLoaded', () => {
             stoppedTimer.end = data.timer.end;
             this.oldTimers.push(stoppedTimer);
           }
-          console.log('Таймер остановлен:', data);
+          console.log('Timer stopped:', data);
         })
         .catch(error => {
-          console.error('Ошибка при остановке таймера:', error);
+          console.error('Error stopping timer:', error);
         });
       },
 
@@ -108,28 +108,52 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         return new Date(timestamp).toLocaleString('ru-RU', { hour12: false });
       },
-    }
-  });
 
-  fetch('/timer/update', {
-    headers: {
-      'Authorization': `Bearer ${window.AUTH_TOKEN}`
+      updateTimersUI(timers) {
+        const currentTime = new Date().getTime();
+        this.activeTimers = timers.filter(timer => timer.isActive).map(timer => {
+          timer.elapsedTime = currentTime - new Date(timer.start).getTime();
+          return timer;
+        });
+        this.oldTimers = timers.filter(timer => !timer.isActive);
+      }
+    },
+    created() {
+      // Подключение к WebSocket
+      const ws = new WebSocket('ws://localhost:3000');
+
+      ws.onmessage = (event) => {
+        const timers = JSON.parse(event.data);
+        this.updateTimersUI(timers); 
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+      };
+
+      ws.onclose = () => {
+        console.log('WebSocket connection closed');
+      };
+
+      // Инициализация таймеров при загрузке
+      fetch('/timer/update', {
+        headers: {
+          'Authorization': `Bearer ${window.AUTH_TOKEN}`
+        }
+      })
+      .then(response => {
+        if (response.ok) {
+          return response.json();
+        } else {
+          throw new Error('Error fetching timers');
+        }
+      })
+      .then(data => {
+        this.updateTimersUI(data.timers);
+      })
+      .catch(error => {
+        console.error('Error fetching timers:', error);
+      });
     }
-  })
-  .then(response => {
-    if (response.ok) {
-      return response.json();
-    } else {
-      throw new Error('Ошибка при получении таймеров');
-    }
-  })
-  .then(data => {
-    app.activeTimers = data.timers.filter(timer => timer.isActive);
-    app.oldTimers = data.timers.filter(timer => !timer.isActive);
-  })
-  .catch(error => {
-    console.error('Ошибка при получении таймеров:', error);
   });
 });
-
-
