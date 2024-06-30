@@ -1,4 +1,4 @@
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { ServerApiVersion } = require('mongodb');
 const express = require('express');
 const nunjucks = require('nunjucks');
 const mongoose = require('mongoose');
@@ -10,7 +10,7 @@ const WebSocket = require('ws');
 const fs = require('fs');
 const path = require('path');
 const session = require('express-session');
-const MongoStore = require('connect-mongo')(session);
+const MongoStore = require('connect-mongo');
 const cookieParser = require('cookie-parser');
 
 require('dotenv').config();
@@ -30,26 +30,19 @@ const server = https.createServer(serverOptions, app);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Connect to MongoDB using MongoClient
-const uri = process.env.MONGO_URI;
-const client = new MongoClient(uri, {
-  serverApi: {
-    version: ServerApiVersion.v1,
-    strict: true,
-    deprecationErrors: true,
-  }
+// Connect to MongoDB using Mongoose
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+  serverSelectionTimeoutMS: 30000, // Увеличьте время ожидания для выбора сервера
+  socketTimeoutMS: 45000, // Увеличьте время ожидания для сокетов
 });
 
-async function run() {
-  try {
-    await client.connect();
-    await client.db("admin").command({ ping: 1 });
-    console.log("Pinged your deployment. You successfully connected to MongoDB!");
-  } finally {
-    await client.close();
-  }
-}
-run().catch(console.dir);
+const db = mongoose.connection;
+db.on('error', console.error.bind(console, 'MongoDB connection error:'));
+db.once('open', function() {
+  console.log("Connected to MongoDB via Mongoose");
+});
 
 // Configure Nunjucks
 nunjucks.configure('views', {
@@ -79,7 +72,7 @@ const sessionMiddleware = session({
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  store: new MongoStore({ mongooseConnection: mongoose.connection }),
+  store: MongoStore.create({ mongoUrl: process.env.MONGO_URI }), // Обновлено для использования подключения Mongoose
   cookie: {
     maxAge: 1000 * 60 * 60 * 24 * 7,
     secure: process.env.NODE_ENV === 'production',
@@ -237,7 +230,7 @@ app.post('/timer/stop/:id', authenticateJWT, async (req, res) => {
 app.get('/timer/update', authenticateJWT, async (req, res) => {
   const userId = req.user._id;
   try {
-    const timers = await Timer.find({ userId });
+    const timers = await Timer.find({ userId }).exec(); // Добавьте exec() для явного выполнения запроса
     timers.forEach(timer => {
       if (timer.isActive) {
         timer.durationInSeconds = Math.floor((new Date() - timer.start) / 1000);
@@ -275,7 +268,7 @@ wss.on('connection', (ws, req) => {
 // Function to send timer updates
 const sendTimersUpdate = async () => {
   try {
-    const timers = await Timer.find({});
+    const timers = await Timer.find({}).exec(); // Добавьте exec() для явного выполнения запроса
 
     timers.forEach(timer => {
       if (timer.isActive) {
