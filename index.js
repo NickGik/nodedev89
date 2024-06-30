@@ -1,4 +1,3 @@
-const { ServerApiVersion } = require('mongodb');
 const express = require('express');
 const nunjucks = require('nunjucks');
 const mongoose = require('mongoose');
@@ -72,7 +71,7 @@ const sessionMiddleware = session({
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  store: MongoStore.create({ mongoUrl: process.env.MONGO_URI }), // Обновлено для использования подключения Mongoose
+  store: MongoStore.create({ mongoUrl: process.env.MONGO_URI }), // Обновлено для использования правильного метода
   cookie: {
     maxAge: 1000 * 60 * 60 * 24 * 7,
     secure: process.env.NODE_ENV === 'production',
