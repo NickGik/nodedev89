@@ -35,10 +35,10 @@ mongoose.connect(process.env.MONGO_URI, {
   useUnifiedTopology: true,
   serverSelectionTimeoutMS: 30000, // Увеличьте время ожидания для выбора сервера
   socketTimeoutMS: 45000, // Увеличьте время ожидания для сокетов
-  ssl: true,
-  sslKey: fs.readFileSync(path.resolve(__dirname, 'ssl', 'private.key')),
-  sslCert: fs.readFileSync(path.resolve(__dirname, 'ssl', 'certificate.pem')),
+  tls: true,
+  tlsCAFile: path.resolve(__dirname, 'ssl', 'certificate.pem'),
 });
+
 
 const db = mongoose.connection;
 db.on('error', console.error.bind(console, 'MongoDB connection error:'));
