@@ -29,12 +29,15 @@ const server = https.createServer(serverOptions, app);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Connect to MongoDB using Mongoose
+// Connect to MongoDB using Mongoose with SSL/TLS
 mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
   serverSelectionTimeoutMS: 30000, // Увеличьте время ожидания для выбора сервера
   socketTimeoutMS: 45000, // Увеличьте время ожидания для сокетов
+  ssl: true,
+  sslKey: fs.readFileSync(path.resolve(__dirname, 'ssl', 'private.key')),
+  sslCert: fs.readFileSync(path.resolve(__dirname, 'ssl', 'certificate.pem')),
 });
 
 const db = mongoose.connection;
