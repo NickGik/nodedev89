@@ -11,7 +11,6 @@ const path = require('path');
 const session = require('express-session');
 const MongoStore = require('connect-mongo');
 const cookieParser = require('cookie-parser');
-
 require('dotenv').config();
 
 const User = require('./models/User');
@@ -19,7 +18,7 @@ const Timer = require('./models/Timer');
 
 const app = express();
 
-// HTTPS configuration
+// HTTPS configuration (replace paths with your SSL certificate and key)
 const serverOptions = {
   key: fs.readFileSync(path.resolve(__dirname, 'ssl', 'private.key')),
   cert: fs.readFileSync(path.resolve(__dirname, 'ssl', 'certificate.pem'))
@@ -29,12 +28,16 @@ const server = https.createServer(serverOptions, app);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Connect to MongoDB using Mongoose with certificate
-mongoose.connect(process.env.MONGO_URI, {
+// Connect to MongoDB using Mongoose with X.509 certificate
+const mongoCredentials = path.resolve(__dirname, 'ssl', 'mongodb-ca.pem');
+
+mongoose.connect('mongodb+srv://cluster0.cnaf5l6.mongodb.net/?authSource=%24external&authMechanism=MONGODB-X509', {
   useNewUrlParser: true,
   useUnifiedTopology: true,
-  ssl: true,
-  sslCA: fs.readFileSync(path.resolve(__dirname, 'ssl', 'mongodb-ca.pem')) 
+  tls: true,
+  tlsCertificateKeyFile: mongoCredentials,
+  serverSelectionTimeoutMS: 30000, // Увеличьте время ожидания для выбора сервера
+  socketTimeoutMS: 45000, // Увеличьте время ожидания для сокетов
 });
 
 const db = mongoose.connection;
@@ -71,7 +74,13 @@ const sessionMiddleware = session({
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  store: MongoStore.create({ mongoUrl: process.env.MONGO_URI }), 
+  store: MongoStore.create({
+    mongoUrl: 'mongodb+srv://cluster0.cnaf5l6.mongodb.net/sessions?authSource=%24external&authMechanism=MONGODB-X509',
+    mongoOptions: {
+      tls: true,
+      tlsCertificateKeyFile: mongoCredentials,
+    }
+  }),
   cookie: {
     maxAge: 1000 * 60 * 60 * 24 * 7,
     secure: process.env.NODE_ENV === 'production',
@@ -229,7 +238,7 @@ app.post('/timer/stop/:id', authenticateJWT, async (req, res) => {
 app.get('/timer/update', authenticateJWT, async (req, res) => {
   const userId = req.user._id;
   try {
-    const timers = await Timer.find({ userId }).exec();
+    const timers = await Timer.find({ userId }).exec(); // Добавьте exec() для явного выполнения запроса
     timers.forEach(timer => {
       if (timer.isActive) {
         timer.durationInSeconds = Math.floor((new Date() - timer.start) / 1000);
@@ -267,7 +276,7 @@ wss.on('connection', (ws, req) => {
 // Function to send timer updates
 const sendTimersUpdate = async () => {
   try {
-    const timers = await Timer.find({}).exec();
+    const timers = await Timer.find({}).exec(); // Добавьте exec() для явного выполнения запроса
 
     timers.forEach(timer => {
       if (timer.isActive) {
@@ -283,15 +292,15 @@ const sendTimersUpdate = async () => {
       }
     });
   } catch (error) {
-    console.error('Error sending timers update:', error);
+    console.error('Error fetching timers:', error);
   }
 };
 
-// Update and send timers every second
+// Start sending timer updates every 1 second
 setInterval(sendTimersUpdate, 1000);
 
-// Start the HTTPS server
-const port = process.env.PORT || 3000;
-server.listen(port, () => {
-  console.log(`Server is running on https://localhost:${port}`);
+const PORT = process.env.PORT || 3000;
+
+server.listen(PORT, () => {
+  console.log(`Server started on port ${PORT}`);
 });
