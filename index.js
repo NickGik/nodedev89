@@ -4,47 +4,26 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const https = require('https');
 const WebSocket = require('ws');
-const fs = require('fs');
 const path = require('path');
 const session = require('express-session');
-const MongoStore = require('connect-mongo');
+const MongoStore = require('connect-mongo')(session);
 const cookieParser = require('cookie-parser');
-require('dotenv').config();
 
 const User = require('./models/User');
 const Timer = require('./models/Timer');
 
+require('dotenv').config();
+
 const app = express();
-
-// HTTPS configuration (replace paths with your SSL certificate and key)
-const serverOptions = {
-  key: fs.readFileSync(path.resolve(__dirname, 'ssl', 'private.key')),
-  cert: fs.readFileSync(path.resolve(__dirname, 'ssl', 'certificate.pem'))
-};
-
-const server = https.createServer(serverOptions, app);
+const server = require('http').createServer(app); // HTTP server for WebSocket
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Connect to MongoDB using Mongoose with X.509 certificate
-const mongoCredentials = path.resolve(__dirname, 'ssl', 'mongodb-ca.pem');
-
-mongoose.connect('mongodb+srv://cluster0.cnaf5l6.mongodb.net/?authSource=%24external&authMechanism=MONGODB-X509', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-  tls: true,
-  tlsCertificateKeyFile: mongoCredentials,
-  serverSelectionTimeoutMS: 30000, // Увеличьте время ожидания для выбора сервера
-  socketTimeoutMS: 45000, // Увеличьте время ожидания для сокетов
-});
-
-const db = mongoose.connection;
-db.on('error', console.error.bind(console, 'MongoDB connection error:'));
-db.once('open', function() {
-  console.log("Connected to MongoDB via Mongoose");
-});
+// Connect to MongoDB
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log('MongoDB connected'))
+  .catch(err => console.error('MongoDB connection error:', err));
 
 // Configure Nunjucks
 nunjucks.configure('views', {
@@ -61,11 +40,12 @@ nunjucks.configure('views', {
 });
 
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || '*',
+  origin: process.env.CORS_ORIGIN || '*', // Разрешить доступ с любого домена
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true // Allow cookie transmission
+  credentials: true // Разрешить передачу куки
 }));
+
 
 app.use(cookieParser(process.env.SESSION_SECRET));
 
@@ -74,16 +54,10 @@ const sessionMiddleware = session({
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  store: MongoStore.create({
-    mongoUrl: 'mongodb+srv://cluster0.cnaf5l6.mongodb.net/sessions?authSource=%24external&authMechanism=MONGODB-X509',
-    mongoOptions: {
-      tls: true,
-      tlsCertificateKeyFile: mongoCredentials,
-    }
-  }),
+  store: new MongoStore({ mongooseConnection: mongoose.connection }),
   cookie: {
-    maxAge: 1000 * 60 * 60 * 24 * 7,
-    secure: process.env.NODE_ENV === 'production',
+    maxAge: 1000 * 60 * 60 * 24 * 7, // 1 week
+    secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
     httpOnly: true
   }
 });
@@ -120,6 +94,8 @@ const authenticateJWT = (req, res, next) => {
   }
 };
 
+
+
 // Registration endpoint
 app.post('/signup', async (req, res) => {
   const { username, password } = req.body;
@@ -152,13 +128,14 @@ app.post('/login', async (req, res) => {
     const token = jwt.sign({ _id: user._id, username: user.username }, process.env.ACCESS_TOKEN_SECRET);
     req.session.user = user;
 
-    // Sending token to the client in Set-Cookie header
+    // Отправка токена клиенту в заголовке Set-Cookie
     res.cookie('token', token, { httpOnly: true, secure: process.env.NODE_ENV === 'production' });
     res.render('index', { user: user, userToken: token });
   } else {
     res.redirect("/");
   }
 });
+
 
 // Logout endpoint
 app.get('/logout', (req, res) => {
@@ -173,7 +150,7 @@ app.get('/logout', (req, res) => {
 });
 
 app.get('/', (req, res) => {
-  res.render('index');
+  res.render('index'); // Предполагается, что у вас есть файл 'index.njk' в папке 'views'
 });
 
 // Create new timer
@@ -238,7 +215,7 @@ app.post('/timer/stop/:id', authenticateJWT, async (req, res) => {
 app.get('/timer/update', authenticateJWT, async (req, res) => {
   const userId = req.user._id;
   try {
-    const timers = await Timer.find({ userId }).exec(); // Добавьте exec() для явного выполнения запроса
+    const timers = await Timer.find({ userId });
     timers.forEach(timer => {
       if (timer.isActive) {
         timer.durationInSeconds = Math.floor((new Date() - timer.start) / 1000);
@@ -251,7 +228,7 @@ app.get('/timer/update', authenticateJWT, async (req, res) => {
   }
 });
 
-// WebSocket server (WSS)
+// WebSocket server
 const wss = new WebSocket.Server({ server });
 
 wss.on('connection', (ws, req) => {
@@ -273,10 +250,10 @@ wss.on('connection', (ws, req) => {
   });
 });
 
-// Function to send timer updates
+// Функция для отправки обновлений таймеров
 const sendTimersUpdate = async () => {
   try {
-    const timers = await Timer.find({}).exec(); // Добавьте exec() для явного выполнения запроса
+    const timers = await Timer.find({});
 
     timers.forEach(timer => {
       if (timer.isActive) {
@@ -296,7 +273,7 @@ const sendTimersUpdate = async () => {
   }
 };
 
-// Start sending timer updates every 1 second
+// Запускаем интервал для отправки обновлений каждые 1 секунду
 setInterval(sendTimersUpdate, 1000);
 
 const PORT = process.env.PORT || 3000;
